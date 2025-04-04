@@ -2,7 +2,7 @@ use macroquad::prelude::*;
 
 mod emulator;
 
-#[macroquad::main("CHIP-8")]
+#[macroquad::main("GR8")]
 async fn main() {
     loop {
         clear_background(BLACK);
