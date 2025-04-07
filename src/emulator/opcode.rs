@@ -75,13 +75,13 @@ pub enum Opcode {
 }
 
 impl Opcode {
-    pub fn decode(data: &Vec<u8>) -> Result<Vec<Opcode>, &'static str> {
+    pub fn decode(data: &Vec<u8>) -> Result<Vec<Opcode>, String> {
         let mut index = 0usize;
         let mut instructions = Vec::<Opcode>::new();
 
         while index < data.len() {
             if index + 1 >= data.len() {
-                return Err("Malformed ROM, expected valid byte but instead found half-byte.");
+                return Err("Malformed ROM, expected valid byte but instead found half-byte.".to_string());
             }
 
             let byte = (data[index], data[index + 1]);
@@ -104,16 +104,16 @@ impl Opcode {
     }
 
     fn decode_triple_hex_bit(n0: u8, n1: u8, n2: u8) -> u16 {
-        ((n0 as u16) << 8) +
-        ((n1 as u16) << 4) +
-        (n2 as u16)
+        ((n0 as u16) << 8) + ((n1 as u16) << 4) + (n2 as u16)
     }
 
-    fn decode_bits(bits: (u8, u8, u8, u8)) -> Result<Opcode, &'static str> {
+    fn decode_bits(bits: (u8, u8, u8, u8)) -> Result<Opcode, String> {
         let opcode = match bits {
             (0x0, 0x0, 0xE, 0x0) => Opcode::ClearScreen,
             (0x0, 0x0, 0xE, 0xE) => Opcode::Return,
-            (0x0, n0, n1, n2) => Opcode::CallMachineCodeRoutine(Opcode::decode_triple_hex_bit(n0, n1, n2)),
+            (0x0, n0, n1, n2) => {
+                Opcode::CallMachineCodeRoutine(Opcode::decode_triple_hex_bit(n0, n1, n2))
+            }
             (0x1, n0, n1, n2) => Opcode::Goto(Opcode::decode_triple_hex_bit(n0, n1, n2)),
             (0x2, n0, n1, n2) => Opcode::CallSubroutine(Opcode::decode_triple_hex_bit(n0, n1, n2)),
             (0x3, r0, n0, n1) => Opcode::SkipInstructionIfEqual(r0, (n0 << 4) + n1),
@@ -131,8 +131,12 @@ impl Opcode {
             (0x8, r0, r1, 7) => Opcode::SubtractRegistersReversed(r0, r1),
             (0x8, r0, r1, 0xE) => Opcode::ShiftRegisterLeft(r0, r1),
             (0x9, r0, r1, 0x0) => Opcode::SkipInstructionIfRegistersNotEqual(r0, r1),
-            (0xA, n0, n1, n2) => Opcode::SetMemoryAddress(Opcode::decode_triple_hex_bit(n0, n1, n2)),
-            (0xB, n0, n1, n2) => Opcode::JumpToMemoryAddress(Opcode::decode_triple_hex_bit(n0, n1, n2)),
+            (0xA, n0, n1, n2) => {
+                Opcode::SetMemoryAddress(Opcode::decode_triple_hex_bit(n0, n1, n2))
+            }
+            (0xB, n0, n1, n2) => {
+                Opcode::JumpToMemoryAddress(Opcode::decode_triple_hex_bit(n0, n1, n2))
+            }
             (0xC, r0, n0, n1) => Opcode::SetRegisterRandom(r0, (n0 << 4) + n1),
             (0xD, r0, r1, n0) => Opcode::DrawSprite(r0, r1, n0),
             (0xE, r0, 0x9, 0xE) => Opcode::SkipInstructionIfKeyDown(r0),
@@ -147,7 +151,7 @@ impl Opcode {
             (0xF, r0, 0x5, 0x5) => Opcode::DumpRegistersIntoMemoryUpToRegister(r0),
             (0xF, r0, 0x6, 0x5) => Opcode::DumpMemoryIntoRegistersUpToRegister(r0),
 
-            _ => return Err("Unsupported instruction!")
+            _ => return Err(format!("Unsupported instruction: {:X?}!", bits)),
         };
 
         Ok(opcode)
@@ -161,7 +165,7 @@ mod tests {
     #[test]
     fn can_decode_clear_display_instruction() {
         assert_eq!(
-            Opcode::decode(&vec![0x00 as u8, 0xE0 as u8]),
+            Opcode::decode(&vec![0x00_u8, 0xE0_u8]),
             Ok(vec![Opcode::ClearScreen])
         )
     }
