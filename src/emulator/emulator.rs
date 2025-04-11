@@ -1,5 +1,7 @@
 use std::fs;
 
+use rand::random_range;
+
 use super::opcode::Opcode;
 
 #[derive(Debug)]
@@ -13,15 +15,15 @@ struct Emulator {
     input: [u8; 16],
     stack: [u8; 48],
     sp: usize,
-    opcodes: Vec<Opcode>,
+    rom: Vec<Opcode>,
     pc: usize,
+    awaiting_keypress: bool
 }
 
 impl From<Vec<Opcode>> for Emulator {
     fn from(opcodes: Vec<Opcode>) -> Self {
         let mut emulator = Emulator::new();
-        emulator.opcodes = opcodes;
-
+        emulator.rom = opcodes;
         emulator
     }
 }
@@ -44,13 +46,14 @@ impl Emulator {
             input: [0; 16],
             stack: [0; 48],
             sp: 0,
-            opcodes: Vec::new(),
+            rom: Vec::new(),
             pc: 0,
+            awaiting_keypress: false
         }
     }
 
     fn with_opcodes(mut self, opcodes: Vec<Opcode>) -> Self {
-        self.opcodes = opcodes;
+        self.rom = opcodes;
         self
     }
 
@@ -59,20 +62,22 @@ impl Emulator {
         self
     }
 
+    fn with_input_as(mut self, r: u8, v: u8) -> Self {
+        self.input[r as usize] = v;
+        self
+    }
+
     fn with_display(mut self, display: [[u8; 64]; 32]) -> Self {
         self.display = display;
         self
     }
 
+
     pub fn load_rom(&mut self, path_to_rom: &str) -> Result<(), String> {
         let rom_data = fs::read(path_to_rom).map_err(|e| e.to_string())?;
-        self.opcodes = Opcode::decode(&rom_data)?;
+        self.rom = Opcode::decode(&rom_data)?;
 
         Ok(())
-    }
-
-    fn clear_screen(&mut self) {
-        self.display = [[0; 64]; 32]
     }
 
     fn goto(&mut self, address: u16) {
@@ -104,16 +109,19 @@ impl Emulator {
     }
 
     fn update(&mut self) -> Result<EmulatorStatus, String> {
-        if self.pc >= self.opcodes.len() {
+        if self.pc >= self.rom.len() {
             return Ok(EmulatorStatus::Done);
         }
 
-        let instruction = &self.opcodes[self.pc];
+        let instruction = &self.rom[self.pc];
 
         self.pc += 1;
 
         match *instruction {
-            Opcode::ClearScreen => self.clear_screen(),
+            Opcode::ClearScreen => {
+                let this = &mut *self;
+                this.display = [[0; 64]; 32]
+            },
             Opcode::Goto(address) => self.goto(address),
             Opcode::CallSubroutine(address) => self.call_subroutine(address)?,
             Opcode::Return => self.r#return()?,
@@ -167,6 +175,72 @@ impl Emulator {
 
                 *r0 >>= 1;
                 self.registers[15] = bit;
+            }
+            Opcode::SubtractRegistersReversed(r0, r1) => {
+                let result =
+                    self.registers[r1 as usize].overflowing_sub(self.registers[r0 as usize]);
+                (self.registers[r0 as usize], self.registers[15]) = (result.0, !result.1 as u8);
+            }
+            Opcode::ShiftRegisterLeft(r0, _r1) => {
+                let r0 = &mut self.registers[r0 as usize];
+                let bit = *r0 & 0x80;
+
+                *r0 <<= 1;
+                self.registers[15] = (bit != 0) as u8;
+            }
+            Opcode::SkipInstructionIfRegistersNotEqual(r0, r1) => {
+                if self.registers[r0 as usize] != self.registers[r1 as usize] {
+                    self.pc += 1;
+                }
+            }
+            Opcode::SetMemoryAddress(immediate) => {
+                self.address = immediate;
+            }
+            Opcode::JumpToMemoryAddress(immediate) => {
+                self.pc = (immediate + self.registers[0] as u16) as usize;
+            }
+            Opcode::SetRegisterRandom(r0, immediate ) => {
+                let number = random_range(0..=255);
+                self.registers[r0 as usize] = (number & immediate as u32) as u8;
+            }
+            Opcode::DrawSprite(_r0, _r1, _immediate) => {
+                todo!();
+            }
+            Opcode::SkipInstructionIfKeyDown(r0) => {
+                let input_address = self.registers[r0 as usize] & 15;
+                let input = self.input[input_address as usize];
+
+                if input != 0 {
+                    self.pc += 1;
+                }
+            }
+            Opcode::SkipInstructionIfKeyUp(r0) => {
+                let input_address = self.registers[r0 as usize] & 15;
+                let input = self.input[input_address as usize];
+
+                if input == 0 {
+                    self.pc += 1;
+                }
+            }
+            Opcode::StoreDelayTimerToRegister(r0) => {
+                self.registers[r0 as usize] = self.delay_timer;
+            }
+            Opcode::HaltAndStoreKeypressIntoRegister(_r0) => {
+                self.awaiting_keypress = true;
+                todo!();
+            }
+            Opcode::SetDelayTimerToRegister(r0) => {
+                self.delay_timer = self.registers[r0 as usize];
+            }
+            Opcode::SetSoundTimerToRegister(r0) => {
+                self.sound_timer = self.registers[r0 as usize];
+            }
+            Opcode::AddRegisterToMemoryAddress(r0) => {
+                let result = self.address.overflowing_add(self.registers[r0 as usize] as u16);
+                self.address = result.0;
+            }
+            Opcode::SetMemoryAddressToSpriteFromRegister(r0) => {
+
             }
             _ => Err(format!("Unknown instruction {:?}", instruction))?,
         };
@@ -314,9 +388,235 @@ mod tests {
         assert_eq!(emulator.registers[0], 0);
     }
 
+    #[test]
     fn opcode_copy_registers() {
-        let mut emulator = Emulator::new().with_opcodes(vec![
-            
-        ]);
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::CopyRegisters(0, 1)])
+            .with_register_as(1, 42);
+
+        assert_eq!(emulator.registers[0], 0);
+        assert_eq!(emulator.registers[1], 42);
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[1], 42);
+        assert_eq!(emulator.registers[1], 42)
+    }
+
+    #[test]
+    fn opcode_or_registers() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::OrRegisters(0, 1)])
+            .with_register_as(0, 1)
+            .with_register_as(1, 2);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 3);
+    }
+
+    #[test]
+    fn opcode_and_registers() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::AndRegisters(0, 1)])
+            .with_register_as(0, 1)
+            .with_register_as(1, 2);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 0);
+    }
+
+    #[test]
+    fn opcode_xor_registers() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::AndRegisters(0, 1)])
+            .with_register_as(0, 4)
+            .with_register_as(1, 6);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 4);
+    }
+
+    #[test]
+    fn opcode_add_registers() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::AddRegisters(0, 1)])
+            .with_register_as(0, 40)
+            .with_register_as(1, 2);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 42);
+        assert_eq!(emulator.registers[15], 0);
+    }
+
+    #[test]
+    fn opcode_add_registers_with_overflow() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::AddRegisters(0, 1)])
+            .with_register_as(0, 255)
+            .with_register_as(1, 43);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 42);
+        assert_eq!(emulator.registers[15], 1);
+    }
+
+    #[test]
+    fn opcode_subtract_registers() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::SubtractRegisters(0, 1)])
+            .with_register_as(0, 255)
+            .with_register_as(1, 213);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 42);
+        assert_eq!(emulator.registers[15], 1);
+    }
+
+    #[test]
+    fn opcode_subtract_registers_with_underflow() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::SubtractRegisters(0, 1)])
+            .with_register_as(0, 0)
+            .with_register_as(1, 214);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 42);
+        assert_eq!(emulator.registers[15], 0);
+    }
+
+    #[test]
+    fn opcode_shift_register_right() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::ShiftRegisterRight(0, 1)])
+            .with_register_as(0, 85);
+
+        assert_eq!(emulator.registers[0], 85);
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 42);
+        assert_eq!(emulator.registers[15], 1);
+    }
+
+    #[test]
+    fn opcode_subtract_registers_reversed() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::SubtractRegistersReversed(0, 1)])
+            .with_register_as(0, 42)
+            .with_register_as(1, 84);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 42);
+        assert_eq!(emulator.registers[15], 1);
+    }
+
+    #[test]
+    fn opcode_subtract_registers_reversed_with_underflow() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::SubtractRegistersReversed(0, 1)])
+            .with_register_as(0, 214)
+            .with_register_as(1, 0);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 42);
+        assert_eq!(emulator.registers[15], 0);
+    }
+
+    #[test]
+    fn opcode_shift_register_left() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::ShiftRegisterLeft(0, 1)])
+            .with_register_as(0, 0b10010101);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 42);
+        assert_eq!(emulator.registers[15], 1);
+    }
+
+    #[test]
+    fn opcode_skip_if_registers_not_equal() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::SkipInstructionIfRegistersNotEqual(0, 1)])
+            .with_register_as(0, 42)
+            .with_register_as(1, 0);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.pc, 2);
+    }
+
+    #[test]
+    fn opcode_skip_if_registers_not_equal_negative() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::SkipInstructionIfRegistersNotEqual(0, 1)])
+            .with_register_as(0, 42)
+            .with_register_as(1, 42);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.pc, 1);
+    }
+
+    #[test]
+    fn opcode_set_memory_address() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::SetMemoryAddress(0xbeef)]);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.address, 0xbeef);
+    }
+
+    #[test]
+    fn opcode_jump_to_memory_address() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::JumpToMemoryAddress(0xbeef)])
+            .with_register_as(0, 42);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.pc, 0xbeef + 42);
+    }
+
+    #[test]
+    fn opcode_set_register_random() {
+        let mut values = Vec::new();
+
+        for _ in 0..10000 {
+            let mut emulator = Emulator::new()
+                .with_opcodes(vec![Opcode::SetRegisterRandom(0, 0xFF)]);
+
+            assert_update_working!(emulator);
+            values.push(emulator.registers[0]);
+        }
+
+        let mut average: u64 = 0u64;
+
+        for v in &values {
+            average += *v as u64;
+        }
+
+        average /= values.len() as u64;
+
+        assert!(average >= 125 && average <= 130);
+    }
+
+    #[test]
+    fn opcode_draw_sprite() {
+        todo!()
+    }
+
+    #[test]
+    fn opcode_skip_if_key_down() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::SkipInstructionIfKeyDown(0)])
+            .with_register_as(0, 0x1F)
+            .with_input_as(0xF, 1);
+        
+        assert_update_working!(emulator);
+        assert_eq!(emulator.pc, 2);
+    }
+
+    #[test]
+    fn opcode_skip_if_key_down_negative() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::SkipInstructionIfKeyDown(0)])
+            .with_register_as(0, 0x1F)
+            .with_input_as(0xF, 0);
+        
+        assert_update_working!(emulator);
+        assert_eq!(emulator.pc, 1);
     }
 }
