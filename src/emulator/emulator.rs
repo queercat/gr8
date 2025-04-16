@@ -314,9 +314,86 @@ mod tests {
         assert_eq!(emulator.registers[0], 0);
     }
 
+    #[test]
     fn opcode_copy_registers() {
-        let mut emulator = Emulator::new().with_opcodes(vec![
-            
-        ]);
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::CopyRegisters(0, 1)])
+            .with_register_as(1, 42);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 42);
+    }
+
+    #[test]
+    fn opcode_or_registers() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::OrRegisters(0, 1)])
+            .with_register_as(0, 0b1010)
+            .with_register_as(1, 0b0101);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 0b1111);
+    }
+
+    #[test]
+    fn opcode_and_registers() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::AndRegisters(0, 1)])
+            .with_register_as(0, 0b1010)
+            .with_register_as(1, 0b1100);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 0b1000);
+    }
+
+    #[test]
+    fn opcode_xor_registers() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::XorRegisters(0, 1)])
+            .with_register_as(0, 0b1100)
+            .with_register_as(1, 0b1010);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 0b0110);
+    }
+
+    #[test]
+    fn opcode_subtract_registers() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::SubtractRegisters(0, 1)])
+            .with_register_as(0, 10)
+            .with_register_as(1, 5);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 5);
+        assert_eq!(emulator.registers[15], 1); // No borrow, VF = 1
+
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::SubtractRegisters(0, 1)])
+            .with_register_as(0, 5)
+            .with_register_as(1, 10);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 251); // 5 - 10 = -5 = 251 in two's complement
+        assert_eq!(emulator.registers[15], 0); // Borrow occurred, VF = 0
+    }
+
+    #[test]
+    fn opcode_shift_register_right() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::ShiftRegisterRight(0, 1)])
+            .with_register_as(0, 0b101);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 0b10); // 5 >> 1 = 2
+        assert_eq!(emulator.registers[15], 1); // LSB was 1
+
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::ShiftRegisterRight(0, 1)])
+            .with_register_as(0, 0b110);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.registers[0], 0b11); // 6 >> 1 = 3
+        assert_eq!(emulator.registers[15], 0); // LSB was 0
     }
 }
