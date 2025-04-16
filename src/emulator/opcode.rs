@@ -81,7 +81,9 @@ impl Opcode {
 
         while index < data.len() {
             if index + 1 >= data.len() {
-                return Err("Malformed ROM, expected valid byte but instead found half-byte.".to_string());
+                return Err(
+                    "Malformed ROM, expected valid byte but instead found half-byte.".to_string(),
+                );
             }
 
             let byte = (data[index], data[index + 1]);
