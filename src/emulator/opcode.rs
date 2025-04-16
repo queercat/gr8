@@ -156,6 +156,17 @@ impl Opcode {
 
         Ok(opcode)
     }
+    pub fn decode_opcode(byte1: u8, byte2: u8) -> Result<Opcode, String> {
+        let bits = (
+            (byte1 & 0xF0) >> 4,
+            byte1 & 0x0F,
+            (byte2 & 0xF0) >> 4,
+            byte2 & 0x0F,
+        );
+        
+        Self::decode_bits(bits)
+    }
+
 }
 
 #[cfg(test)]
