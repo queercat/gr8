@@ -75,32 +75,64 @@ pub enum Opcode {
 }
 
 impl Opcode {
-    pub fn decode(data: &Vec<u8>) -> Result<Vec<Opcode>, String> {
-        let mut index = 0usize;
-        let mut instructions = Vec::<Opcode>::new();
-
-        while index < data.len() {
-            if index + 1 >= data.len() {
-                return Err("Malformed ROM, expected valid byte but instead found half-byte.".to_string());
+    pub fn encode(opcode: Opcode) -> Result<(u8, u8), String> {
+        let bits = match opcode {
+            Opcode::CallMachineCodeRoutine(data) => data.to_bits(),
+            Opcode::ClearScreen => (0x00, 0xE0),
+            Opcode::Return => (0x00, 0xEE),
+            Opcode::Goto(data) => (0x1000 | data).to_bits(),
+            Opcode::CallSubroutine(data) => (0x2000 | data).to_bits(),
+            Opcode::SkipInstructionIfEqual(l, r) => (0x30 | l, r),
+            Opcode::SkipInstructionIfNotEqual(l, r) => (0x40 | l, r),
+            Opcode::SkipInstructionIfRegistersEqual(l, r) => (0x50 | l, r << 4),
+            Opcode::SetRegister(l, r) => (0x60 | l, r),
+            Opcode::AddToRegister(l, r) => (0x70 | l, r),
+            Opcode::CopyRegisters(l, r) => (0x80 | l, r),
+            Opcode::OrRegisters(l, r) => (0x80 | l, r << 4 | 0x01),
+            Opcode::AndRegisters(l, r) => (0x80 | l, r << 4 | 0x02),
+            Opcode::XorRegisters(l, r) => (0x80 | l, r << 4 | 0x03),
+            Opcode::AddRegisters(l, r) => (0x80 | l, r << 4 | 0x04),
+            Opcode::SubtractRegisters(l, r) => (0x80 | l, r << 4 | 0x05),
+            Opcode::ShiftRegisterRight(l, r) => (0x80 | l, r << 4 | 0x06),
+            Opcode::SubtractRegistersReversed(l, r) => (0x80 | l, r << 4 | 0x07),
+            Opcode::ShiftRegisterLeft(l, r) => (0x80 | l, r << 4 | 0x0E),
+            Opcode::SkipInstructionIfRegistersNotEqual(l, r) => (0x90 | l, r << 4),
+            Opcode::SetMemoryAddress(data) => (0xA000 | data).to_bits(),
+            Opcode::JumpToMemoryAddress(data) => (0xB000 | data).to_bits(),
+            Opcode::SetRegisterRandom(l, r) => (0xC0 | l, r),
+            Opcode::DrawSprite(l, m, r) => (0xD | l, m | r),
+            Opcode::SkipInstructionIfKeyDown(data) => (0xE09E | (data as u16) << 8).to_bits(),
+            Opcode::SkipInstructionIfKeyUp(data) => (0xE0A1 | (data as u16) << 8).to_bits(),
+            Opcode::StoreDelayTimerToRegister(data) => (0xF007 | (data as u16) << 8).to_bits(),
+            Opcode::HaltAndStoreKeypressIntoRegister(data) => {
+                (0xF00A | (data as u16) << 8).to_bits()
             }
 
-            let byte = (data[index], data[index + 1]);
-            let bits = (
-                (byte.0 & 0xF0) >> 4,
-                byte.0 & 0x0F,
-                (byte.1 & 0xF0) >> 4,
-                byte.1 & 0x0F,
-            );
+            Opcode::SetDelayTimerToRegister(data) => (0xF015 | (data as u16) << 8).to_bits(),
+            Opcode::SetSoundTimerToRegister(data) => (0xF010 | (data as u16) << 8).to_bits(),
+            Opcode::AddRegisterToMemoryAddress(data) => (0xF01E | (data as u16) << 8).to_bits(),
+            Opcode::SetMemoryAddressToSpriteFromRegister(data) => {
+                (0xF029 | (data as u16) << 8).to_bits()
+            }
+            Opcode::SetMemoryAddressToBinaryEncodedDecimalFromRegister(data) => {
+                (0xF033 | (data as u16) << 8).to_bits()
+            }
+            Opcode::DumpRegistersIntoMemoryUpToRegister(data) => {
+                (0xF055 | (data as u16) << 8).to_bits()
+            }
 
-            match Opcode::decode_bits(bits) {
-                Ok(opcode) => instructions.push(opcode),
-                Err(e) => return Err(e),
-            };
+            Opcode::DumpMemoryIntoRegistersUpToRegister(data) => {
+                (0xF065 | (data as u16) << 8).to_bits()
+            }
+        };
 
-            index += 2;
-        }
+        Ok(bits)
+    }
 
-        Ok(instructions)
+    pub fn decode(data: (u8, u8)) -> Result<Opcode, String> {
+        let bits = (data.0 >> 4, data.0 & 0xF, data.1 >> 4, data.1 & 0xF);
+
+        Opcode::decode_bits(bits)
     }
 
     fn decode_triple_hex_bit(n0: u8, n1: u8, n2: u8) -> u16 {
@@ -158,15 +190,88 @@ impl Opcode {
     }
 }
 
+pub trait ToBits {
+    fn to_bits(self) -> Vec<u8>;
+}
+
+impl ToBits for Vec<Opcode> {
+    fn to_bits(self) -> Vec<u8> {
+        let mut bits = Vec::new();
+
+        self.into_iter().for_each(|o| {
+            let (l, r) = Opcode::encode(o).unwrap();
+            bits.push(l);
+            bits.push(r);
+        });
+
+        bits
+    }
+}
+
+pub trait ToBitsTuple {
+    fn to_bits(&self) -> (u8, u8);
+}
+
+impl ToBitsTuple for u16 {
+    fn to_bits(&self) -> (u8, u8) {
+        ((self >> 8) as u8, (self & 0xFF) as u8)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn can_decode_clear_display_instruction() {
+        assert_eq!(Opcode::decode((0x00, 0xE0)), Ok(Opcode::ClearScreen))
+    }
+
+    #[test]
+    fn can_decode_add_registers_instruction() {
         assert_eq!(
-            Opcode::decode(&vec![0x00_u8, 0xE0_u8]),
-            Ok(vec![Opcode::ClearScreen])
-        )
+            Opcode::decode((0x8F, 0xF4)),
+            Ok(Opcode::AddRegisters(0x0F, 0x0F))
+        );
+    }
+
+    #[test]
+    fn can_encode_add_registers_instruction() {
+        assert_eq!(
+            Opcode::encode(Opcode::AddRegisters(0x0F, 0x0F)),
+            Ok((0x8F, 0xF4))
+        );
+    }
+
+    #[test]
+    fn can_decode_goto_instruction() {
+        assert_eq!(Opcode::decode((0x1F, 0xFF)), Ok(Opcode::Goto(0x0FFF)));
+        assert_eq!(Opcode::decode((0x10, 0xAF)), Ok(Opcode::Goto(0x00AF)));
+    }
+
+    #[test]
+    fn can_decode_set_memory_address_instruction() {
+        assert_eq!(
+            Opcode::decode((0xA4, 0x20)),
+            Ok(Opcode::SetMemoryAddress(0x420))
+        );
+
+        assert_eq!(
+            Opcode::decode((0xA0, 0x2F)),
+            Ok(Opcode::SetMemoryAddress(0x02F))
+        );
+    }
+
+    #[test]
+    fn can_encode_set_memory_address_instruction() {
+        assert_eq!(
+            Opcode::encode(Opcode::SetMemoryAddress(0x420)),
+            Ok((0xA4, 0x20))
+        );
+
+        assert_eq!(
+            Opcode::encode(Opcode::SetMemoryAddress(0x0AF)),
+            Ok((0xA0, 0xAF))
+        );
     }
 }

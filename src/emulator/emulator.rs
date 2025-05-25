@@ -3,6 +3,7 @@ use std::fs;
 use rand::random_range;
 
 use super::opcode::Opcode;
+use crate::emulator::opcode::ToBits;
 
 #[derive(Debug)]
 struct Emulator {
@@ -15,15 +16,15 @@ struct Emulator {
     input: [u8; 16],
     stack: [u8; 48],
     sp: usize,
-    rom: Vec<Opcode>,
+    rom: Vec<u8>,
     pc: usize,
-    awaiting_keypress: bool
+    awaiting_keypress: bool,
 }
 
 impl From<Vec<Opcode>> for Emulator {
     fn from(opcodes: Vec<Opcode>) -> Self {
         let mut emulator = Emulator::new();
-        emulator.rom = opcodes;
+        emulator.rom = opcodes.to_bits();
         emulator
     }
 }
@@ -48,12 +49,12 @@ impl Emulator {
             sp: 0,
             rom: Vec::new(),
             pc: 0,
-            awaiting_keypress: false
+            awaiting_keypress: false,
         }
     }
 
     fn with_opcodes(mut self, opcodes: Vec<Opcode>) -> Self {
-        self.rom = opcodes;
+        self.rom = opcodes.to_bits();
         self
     }
 
@@ -72,10 +73,9 @@ impl Emulator {
         self
     }
 
-
     pub fn load_rom(&mut self, path_to_rom: &str) -> Result<(), String> {
         let rom_data = fs::read(path_to_rom).map_err(|e| e.to_string())?;
-        self.rom = Opcode::decode(&rom_data)?;
+        self.rom = rom_data;
 
         Ok(())
     }
@@ -90,7 +90,7 @@ impl Emulator {
         }
 
         self.stack[self.sp] = self.pc as u8;
-        self.sp += 1;
+        self.sp += 2;
 
         self.goto(address);
 
@@ -108,36 +108,38 @@ impl Emulator {
         Ok(())
     }
 
+    fn fetch_and_decode(&mut self) -> Result<Opcode, String> {
+        let instruction = (self.rom[self.pc], self.rom[self.pc + 1]);
+        self.pc += 2;
+        Ok(Opcode::decode(instruction)?)
+    }
+
     fn update(&mut self) -> Result<EmulatorStatus, String> {
-        if self.pc >= self.rom.len() {
-            return Ok(EmulatorStatus::Done);
-        }
+        let opcode = self.fetch_and_decode()?;
 
-        let instruction = &self.rom[self.pc];
+        dbg!(&opcode);
 
-        self.pc += 1;
-
-        match *instruction {
+        match opcode {
             Opcode::ClearScreen => {
                 let this = &mut *self;
                 this.display = [[0; 64]; 32]
-            },
+            }
             Opcode::Goto(address) => self.goto(address),
             Opcode::CallSubroutine(address) => self.call_subroutine(address)?,
             Opcode::Return => self.r#return()?,
             Opcode::SkipInstructionIfEqual(r0, immediate) => {
                 if self.registers[r0 as usize] == immediate {
-                    self.pc += 1
+                    self.pc += 2
                 }
             }
             Opcode::SkipInstructionIfNotEqual(r0, immediate) => {
                 if self.registers[r0 as usize] != immediate {
-                    self.pc += 1
+                    self.pc += 2
                 }
             }
             Opcode::SkipInstructionIfRegistersEqual(r0, r1) => {
                 if self.registers[r0 as usize] == self.registers[r1 as usize] {
-                    self.pc += 1
+                    self.pc += 2
                 }
             }
             Opcode::SetRegister(r0, immediate) => {
@@ -190,7 +192,7 @@ impl Emulator {
             }
             Opcode::SkipInstructionIfRegistersNotEqual(r0, r1) => {
                 if self.registers[r0 as usize] != self.registers[r1 as usize] {
-                    self.pc += 1;
+                    self.pc += 2;
                 }
             }
             Opcode::SetMemoryAddress(immediate) => {
@@ -199,7 +201,7 @@ impl Emulator {
             Opcode::JumpToMemoryAddress(immediate) => {
                 self.pc = (immediate + self.registers[0] as u16) as usize;
             }
-            Opcode::SetRegisterRandom(r0, immediate ) => {
+            Opcode::SetRegisterRandom(r0, immediate) => {
                 let number = random_range(0..=255);
                 self.registers[r0 as usize] = (number & immediate as u32) as u8;
             }
@@ -211,7 +213,7 @@ impl Emulator {
                 let input = self.input[input_address as usize];
 
                 if input != 0 {
-                    self.pc += 1;
+                    self.pc += 2;
                 }
             }
             Opcode::SkipInstructionIfKeyUp(r0) => {
@@ -219,7 +221,7 @@ impl Emulator {
                 let input = self.input[input_address as usize];
 
                 if input == 0 {
-                    self.pc += 1;
+                    self.pc += 2;
                 }
             }
             Opcode::StoreDelayTimerToRegister(r0) => {
@@ -236,13 +238,15 @@ impl Emulator {
                 self.sound_timer = self.registers[r0 as usize];
             }
             Opcode::AddRegisterToMemoryAddress(r0) => {
-                let result = self.address.overflowing_add(self.registers[r0 as usize] as u16);
+                let result = self
+                    .address
+                    .overflowing_add(self.registers[r0 as usize] as u16);
                 self.address = result.0;
             }
-            Opcode::SetMemoryAddressToSpriteFromRegister(r0) => {
-
+            Opcode::SetMemoryAddressToSpriteFromRegister(_) => {
+                unimplemented!()
             }
-            _ => Err(format!("Unknown instruction {:?}", instruction))?,
+            _ => Err(format!("Unknown instruction {:?}", opcode))?,
         };
 
         Ok(EmulatorStatus::Working)
@@ -308,7 +312,7 @@ mod tests {
             .with_register_as(0, 42);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 2);
+        assert_eq!(emulator.pc, 4)
     }
 
     #[test]
@@ -318,7 +322,7 @@ mod tests {
             .with_register_as(0, 69);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 1);
+        assert_eq!(emulator.pc, 2);
     }
 
     #[test]
@@ -328,17 +332,17 @@ mod tests {
             .with_register_as(0, 42);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 2);
+        assert_eq!(emulator.pc, 4);
     }
 
     #[test]
     fn opcode_skip_if_register_not_immediate_negative() {
         let mut emulator = Emulator::new()
-            .with_opcodes(vec![Opcode::SkipInstructionIfEqual(0, 42)])
-            .with_register_as(0, 69);
+            .with_opcodes(vec![Opcode::SkipInstructionIfNotEqual(0, 42)])
+            .with_register_as(0, 42);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 1);
+        assert_eq!(emulator.pc, 2);
     }
 
     #[test]
@@ -349,7 +353,7 @@ mod tests {
             .with_register_as(1, 42);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 2);
+        assert_eq!(emulator.pc, 4);
     }
 
     #[test]
@@ -360,7 +364,7 @@ mod tests {
             .with_register_as(1, 69);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 1);
+        assert_eq!(emulator.pc, 2);
     }
 
     #[test]
@@ -537,7 +541,7 @@ mod tests {
             .with_register_as(1, 0);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 2);
+        assert_eq!(emulator.pc, 4);
     }
 
     #[test]
@@ -548,26 +552,25 @@ mod tests {
             .with_register_as(1, 42);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 1);
+        assert_eq!(emulator.pc, 2);
     }
 
     #[test]
     fn opcode_set_memory_address() {
-        let mut emulator = Emulator::new()
-            .with_opcodes(vec![Opcode::SetMemoryAddress(0xbeef)]);
+        let mut emulator = Emulator::new().with_opcodes(vec![Opcode::SetMemoryAddress(0xfef)]);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.address, 0xbeef);
+        assert_eq!(emulator.address, 0xfef);
     }
 
     #[test]
     fn opcode_jump_to_memory_address() {
         let mut emulator = Emulator::new()
-            .with_opcodes(vec![Opcode::JumpToMemoryAddress(0xbeef)])
+            .with_opcodes(vec![Opcode::JumpToMemoryAddress(0xfef)])
             .with_register_as(0, 42);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 0xbeef + 42);
+        assert_eq!(emulator.pc, 0xfef + 42);
     }
 
     #[test]
@@ -575,8 +578,8 @@ mod tests {
         let mut values = Vec::new();
 
         for _ in 0..10000 {
-            let mut emulator = Emulator::new()
-                .with_opcodes(vec![Opcode::SetRegisterRandom(0, 0xFF)]);
+            let mut emulator =
+                Emulator::new().with_opcodes(vec![Opcode::SetRegisterRandom(0, 0xFF)]);
 
             assert_update_working!(emulator);
             values.push(emulator.registers[0]);
@@ -604,9 +607,9 @@ mod tests {
             .with_opcodes(vec![Opcode::SkipInstructionIfKeyDown(0)])
             .with_register_as(0, 0x1F)
             .with_input_as(0xF, 1);
-        
+
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 2);
+        assert_eq!(emulator.pc, 4);
     }
 
     #[test]
@@ -615,8 +618,8 @@ mod tests {
             .with_opcodes(vec![Opcode::SkipInstructionIfKeyDown(0)])
             .with_register_as(0, 0x1F)
             .with_input_as(0xF, 0);
-        
+
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 1);
+        assert_eq!(emulator.pc, 2);
     }
 }
