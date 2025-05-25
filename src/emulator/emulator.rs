@@ -3,12 +3,19 @@ use crate::emulator::opcode::ToBits;
 use rand::random_range;
 use std::fs;
 
+pub const DISPLAY_WIDTH: usize = 64;
+pub const DISPLAY_HEIGHT: usize = 32;
+pub const MEMORY_SIZE: usize = 4096;
+pub const REGISTER_COUNT: usize = 16;
+pub const STACK_SIZE: usize = 48;
+pub const FONT_DATA_ADDRESS: usize = 0x20;
+
 #[derive(Debug)]
 pub struct Emulator {
-    memory: [u8; 4096],
-    registers: [u8; 16],
+    pub display: [[u8; DISPLAY_WIDTH]; DISPLAY_HEIGHT],
+    memory: [u8; MEMORY_SIZE],
+    registers: [u8; REGISTER_COUNT],
     address: u16,
-    display: [[u8; 64]; 32],
     delay_timer: u8,
     sound_timer: u8,
     input: [u8; 16],
@@ -34,18 +41,50 @@ pub enum EmulatorStatus {
 
 impl Emulator {
     pub fn new() -> Self {
-        Emulator {
-            memory: [0; 4096],
-            registers: [0; 16],
+        let mut emulator = Emulator {
+            memory: [0; MEMORY_SIZE],
+            registers: [0; REGISTER_COUNT],
             address: 0,
-            display: [[0; 64]; 32],
+            display: [[0; DISPLAY_WIDTH]; DISPLAY_HEIGHT],
             delay_timer: 0,
             sound_timer: 0,
             input: [0; 16],
-            stack: [0; 48],
+            stack: [0; STACK_SIZE],
             sp: 0,
             pc: 0x200,
             awaiting_keypress: false,
+        };
+
+        emulator.init();
+
+        emulator
+    }
+
+    fn init(&mut self) {
+        let font_data: [[u8; 5]; 16] = [
+            [0xF0, 0x90, 0x90, 0x90, 0xF0], // 0
+            [0x20, 0x60, 0x20, 0x20, 0x70], // 1
+            [0xF0, 0x10, 0xF0, 0x80, 0xF0], // 2
+            [0xF0, 0x10, 0xF0, 0x10, 0xF0], // 3
+            [0x90, 0x90, 0xF0, 0x10, 0x10], // 4
+            [0xF0, 0x80, 0xF0, 0x10, 0xF0], // 5
+            [0xF0, 0x80, 0xF0, 0x90, 0xF0], // 6
+            [0xF0, 0x10, 0x20, 0x40, 0x40], // 7
+            [0xF0, 0x90, 0xF0, 0x90, 0xF0], // 8
+            [0xF0, 0x90, 0xF0, 0x10, 0xF0], // 9
+            [0xF0, 0x90, 0xF0, 0x90, 0x90], // A
+            [0xE0, 0x90, 0xE0, 0x90, 0xE0], // B
+            [0xF0, 0x80, 0x80, 0x80, 0xF0], // C
+            [0xE0, 0x90, 0x90, 0x90, 0xE0], // D
+            [0xF0, 0x80, 0xF0, 0x80, 0xF0], // E
+            [0xF0, 0x80, 0xF0, 0x80, 0x80], // F
+        ];
+
+        for letter_idx in 0..font_data.len() {
+            for byte_idx in 0..font_data[letter_idx].len() {
+                self.memory[FONT_DATA_ADDRESS + letter_idx * 5 + byte_idx] =
+                    font_data[letter_idx][byte_idx];
+            }
         }
     }
 
@@ -210,19 +249,24 @@ impl Emulator {
                 self.registers[r0 as usize] = (number & immediate as u32) as u8;
             }
             Opcode::DrawSprite(r0, r1, immediate) => {
-                let (x, y, height) = (r0 as usize, r1 as usize, immediate as usize);
+                let (x, y, height) = (
+                    self.registers[r0 as usize] as usize,
+                    self.registers[r1 as usize] as usize,
+                    immediate as usize,
+                );
 
-                for i in y..y + height {
-                    let sprite = self.memory[self.address as usize + i as usize];
+                self.registers[15] = 0;
 
-                    for j in 0..8 {
-                        let sprite_bit = (sprite >> j) & 1;
+                for dy in 0..height {
+                    let sprite = self.memory[self.address as usize + dy];
+                    for dx in 0..8 {
+                        let sprite_bit = (sprite >> (7 - dx)) & 1;
 
-                        if sprite_bit == 1 && self.display[x][y] == 1 {
+                        if sprite_bit == 1 && self.display[y + dy][x + dx] == 1 {
                             self.registers[15] = 1;
                         }
 
-                        self.display[x][y] ^= sprite_bit;
+                        self.display[y + dy][x + dx] ^= sprite_bit;
                     }
                 }
             }
@@ -616,7 +660,12 @@ mod tests {
 
     #[test]
     fn opcode_draw_sprite() {
-        todo!()
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::SkipInstructionIfKeyDown(0)])
+            .with_register_as(0, 0x1F)
+            .with_input_as(0xF, 1);
+
+        assert_update_working!(emulator);
     }
 
     #[test]
