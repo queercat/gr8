@@ -1,12 +1,10 @@
-use std::fs;
-
-use rand::random_range;
-
 use super::opcode::Opcode;
 use crate::emulator::opcode::ToBits;
+use rand::random_range;
+use std::fs;
 
 #[derive(Debug)]
-struct Emulator {
+pub struct Emulator {
     memory: [u8; 4096],
     registers: [u8; 16],
     address: u16,
@@ -16,7 +14,6 @@ struct Emulator {
     input: [u8; 16],
     stack: [u8; 48],
     sp: usize,
-    rom: Vec<u8>,
     pc: usize,
     awaiting_keypress: bool,
 }
@@ -24,19 +21,19 @@ struct Emulator {
 impl From<Vec<Opcode>> for Emulator {
     fn from(opcodes: Vec<Opcode>) -> Self {
         let mut emulator = Emulator::new();
-        emulator.rom = opcodes.to_bits();
+        emulator.load_instructions(opcodes.to_bits());
         emulator
     }
 }
 
 #[derive(Debug, PartialEq)]
-enum EmulatorStatus {
+pub enum EmulatorStatus {
     Working,
     Done,
 }
 
 impl Emulator {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Emulator {
             memory: [0; 4096],
             registers: [0; 16],
@@ -47,14 +44,13 @@ impl Emulator {
             input: [0; 16],
             stack: [0; 48],
             sp: 0,
-            rom: Vec::new(),
-            pc: 0,
+            pc: 0x200,
             awaiting_keypress: false,
         }
     }
 
     fn with_opcodes(mut self, opcodes: Vec<Opcode>) -> Self {
-        self.rom = opcodes.to_bits();
+        self.load_instructions(opcodes.to_bits()).unwrap();
         self
     }
 
@@ -73,9 +69,17 @@ impl Emulator {
         self
     }
 
+    fn load_instructions(&mut self, instructions: Vec<u8>) -> Result<(), String> {
+        dbg!(&instructions.len());
+        for i in 0..instructions.len() {
+            self.memory[i + 0x200] = instructions[i];
+        }
+        Ok(())
+    }
+
     pub fn load_rom(&mut self, path_to_rom: &str) -> Result<(), String> {
         let rom_data = fs::read(path_to_rom).map_err(|e| e.to_string())?;
-        self.rom = rom_data;
+        self.load_instructions(rom_data);
 
         Ok(())
     }
@@ -109,12 +113,12 @@ impl Emulator {
     }
 
     fn fetch_and_decode(&mut self) -> Result<Opcode, String> {
-        let instruction = (self.rom[self.pc], self.rom[self.pc + 1]);
+        let instruction = (self.memory[self.pc], self.memory[self.pc + 1]);
         self.pc += 2;
         Ok(Opcode::decode(instruction)?)
     }
 
-    fn update(&mut self) -> Result<EmulatorStatus, String> {
+    pub fn update(&mut self) -> Result<EmulatorStatus, String> {
         let opcode = self.fetch_and_decode()?;
 
         dbg!(&opcode);
@@ -205,8 +209,22 @@ impl Emulator {
                 let number = random_range(0..=255);
                 self.registers[r0 as usize] = (number & immediate as u32) as u8;
             }
-            Opcode::DrawSprite(_r0, _r1, _immediate) => {
-                todo!();
+            Opcode::DrawSprite(r0, r1, immediate) => {
+                let (x, y, height) = (r0 as usize, r1 as usize, immediate as usize);
+
+                for i in y..y + height {
+                    let sprite = self.memory[self.address as usize + i as usize];
+
+                    for j in 0..8 {
+                        let sprite_bit = (sprite >> j) & 1;
+
+                        if sprite_bit == 1 && self.display[x][y] == 1 {
+                            self.registers[15] = 1;
+                        }
+
+                        self.display[x][y] ^= sprite_bit;
+                    }
+                }
             }
             Opcode::SkipInstructionIfKeyDown(r0) => {
                 let input_address = self.registers[r0 as usize] & 15;
@@ -312,7 +330,7 @@ mod tests {
             .with_register_as(0, 42);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 4)
+        assert_eq!(emulator.pc, 4 + 0x200)
     }
 
     #[test]
@@ -322,7 +340,7 @@ mod tests {
             .with_register_as(0, 69);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 2);
+        assert_eq!(emulator.pc, 2 + 0x200);
     }
 
     #[test]
@@ -332,7 +350,7 @@ mod tests {
             .with_register_as(0, 42);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 4);
+        assert_eq!(emulator.pc, 4 + 0x200);
     }
 
     #[test]
@@ -342,7 +360,7 @@ mod tests {
             .with_register_as(0, 42);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 2);
+        assert_eq!(emulator.pc, 2 + 0x200);
     }
 
     #[test]
@@ -353,7 +371,7 @@ mod tests {
             .with_register_as(1, 42);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 4);
+        assert_eq!(emulator.pc, 4 + 0x200);
     }
 
     #[test]
@@ -364,7 +382,7 @@ mod tests {
             .with_register_as(1, 69);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 2);
+        assert_eq!(emulator.pc, 2 + 0x200);
     }
 
     #[test]
@@ -541,7 +559,7 @@ mod tests {
             .with_register_as(1, 0);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 4);
+        assert_eq!(emulator.pc, 4 + 0x200);
     }
 
     #[test]
@@ -552,7 +570,7 @@ mod tests {
             .with_register_as(1, 42);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 2);
+        assert_eq!(emulator.pc, 2 + 0x200);
     }
 
     #[test]
@@ -609,7 +627,7 @@ mod tests {
             .with_input_as(0xF, 1);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 4);
+        assert_eq!(emulator.pc, 4 + 0x200);
     }
 
     #[test]
@@ -620,6 +638,6 @@ mod tests {
             .with_input_as(0xF, 0);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.pc, 2);
+        assert_eq!(emulator.pc, 2 + 0x200);
     }
 }
