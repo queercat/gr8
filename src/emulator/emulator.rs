@@ -353,8 +353,9 @@ impl Emulator {
                     .overflowing_add(self.registers[r0 as usize] as u16);
                 self.address = result.0;
             }
-            Opcode::SetMemoryAddressToSpriteFromRegister(_) => {
-                unimplemented!()
+            Opcode::SetMemoryAddressToSpriteFromRegister(r0) => {
+                let data = self.registers[r0 as usize];
+                self.address = 5 * data as u16;
             }
             Opcode::CallMachineCodeRoutine(_) => unimplemented!("This is probably bad memory."),
             Opcode::SetMemoryAddressToBinaryEncodedDecimalFromRegister(r0) => {
