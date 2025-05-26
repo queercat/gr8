@@ -100,7 +100,7 @@ impl Opcode {
             Opcode::SetMemoryAddress(data) => (0xA000 | data).to_bits(),
             Opcode::JumpToMemoryAddress(data) => (0xB000 | data).to_bits(),
             Opcode::SetRegisterRandom(l, r) => (0xC0 | l, r),
-            Opcode::DrawSprite(l, m, r) => (0xD | l, m | r),
+            Opcode::DrawSprite(l, m, r) => (0xD0 | l, (m << 4) | r),
             Opcode::SkipInstructionIfKeyDown(data) => (0xE09E | (data as u16) << 8).to_bits(),
             Opcode::SkipInstructionIfKeyUp(data) => (0xE0A1 | (data as u16) << 8).to_bits(),
             Opcode::StoreDelayTimerToRegister(data) => (0xF007 | (data as u16) << 8).to_bits(),
@@ -109,7 +109,7 @@ impl Opcode {
             }
 
             Opcode::SetDelayTimerToRegister(data) => (0xF015 | (data as u16) << 8).to_bits(),
-            Opcode::SetSoundTimerToRegister(data) => (0xF010 | (data as u16) << 8).to_bits(),
+            Opcode::SetSoundTimerToRegister(data) => (0xF018 | (data as u16) << 8).to_bits(),
             Opcode::AddRegisterToMemoryAddress(data) => (0xF01E | (data as u16) << 8).to_bits(),
             Opcode::SetMemoryAddressToSpriteFromRegister(data) => {
                 (0xF029 | (data as u16) << 8).to_bits()

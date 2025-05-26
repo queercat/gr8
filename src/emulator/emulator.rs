@@ -202,8 +202,6 @@ impl Emulator {
 
         let opcode = self.fetch_and_decode()?;
 
-        dbg!(&opcode);
-
         match opcode {
             Opcode::ClearScreen => {
                 let this = &mut *self;
@@ -301,11 +299,8 @@ impl Emulator {
 
                 for dy in 0..height {
                     let sprite = self.memory[self.address as usize + dy];
-                    if y + dy >= DISPLAY_HEIGHT {
-                        break;
-                    }
                     for dx in 0..8 {
-                        if x + dx >= DISPLAY_WIDTH {
+                        if y + dy >= DISPLAY_HEIGHT || x + dx >= DISPLAY_WIDTH {
                             continue;
                         }
 
@@ -559,12 +554,12 @@ mod tests {
     #[test]
     fn opcode_xor_registers() {
         let mut emulator = Emulator::new()
-            .with_opcodes(vec![Opcode::AndRegisters(0, 1)])
-            .with_register_as(0, 4)
-            .with_register_as(1, 6);
+            .with_opcodes(vec![Opcode::XorRegisters(0, 1)])
+            .with_register_as(0, 1)
+            .with_register_as(1, 1);
 
         assert_update_working!(emulator);
-        assert_eq!(emulator.registers[0], 4);
+        assert_eq!(emulator.registers[0], 0);
     }
 
     #[test]
