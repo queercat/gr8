@@ -16,10 +16,13 @@ pub struct Emulator {
     memory: [u8; MEMORY_SIZE],
     registers: [u8; REGISTER_COUNT],
     address: u16,
+    pub time_in_ms: u128,
     delay_timer: u8,
+    delay_timer_last_updated: u128,
     sound_timer: u8,
+    sound_timer_last_updated: u128,
     input: [u8; 16],
-    stack: [u8; 48],
+    stack: [u16; 48],
     sp: usize,
     pc: usize,
     awaiting_keypress: bool,
@@ -28,7 +31,9 @@ pub struct Emulator {
 impl From<Vec<Opcode>> for Emulator {
     fn from(opcodes: Vec<Opcode>) -> Self {
         let mut emulator = Emulator::new();
-        emulator.load_instructions(opcodes.to_bits());
+        emulator
+            .load_instructions(opcodes.to_bits())
+            .expect("Can't load instructions.");
         emulator
     }
 }
@@ -36,6 +41,7 @@ impl From<Vec<Opcode>> for Emulator {
 #[derive(Debug, PartialEq)]
 pub enum EmulatorStatus {
     Working,
+    Waiting,
     Done,
 }
 
@@ -47,7 +53,10 @@ impl Emulator {
             address: 0,
             display: [[0; DISPLAY_WIDTH]; DISPLAY_HEIGHT],
             delay_timer: 0,
+            delay_timer_last_updated: 0,
             sound_timer: 0,
+            sound_timer_last_updated: 0,
+            time_in_ms: 0,
             input: [0; 16],
             stack: [0; STACK_SIZE],
             sp: 0,
@@ -109,7 +118,6 @@ impl Emulator {
     }
 
     fn load_instructions(&mut self, instructions: Vec<u8>) -> Result<(), String> {
-        dbg!(&instructions.len());
         for i in 0..instructions.len() {
             self.memory[i + 0x200] = instructions[i];
         }
@@ -118,7 +126,7 @@ impl Emulator {
 
     pub fn load_rom(&mut self, path_to_rom: &str) -> Result<(), String> {
         let rom_data = fs::read(path_to_rom).map_err(|e| e.to_string())?;
-        self.load_instructions(rom_data);
+        self.load_instructions(rom_data)?;
 
         Ok(())
     }
@@ -132,8 +140,8 @@ impl Emulator {
             return Err("Stack overflow!".to_string());
         }
 
-        self.stack[self.sp] = self.pc as u8;
-        self.sp += 2;
+        self.stack[self.sp] = self.pc as u16;
+        self.sp += 1;
 
         self.goto(address);
 
@@ -145,7 +153,7 @@ impl Emulator {
             return Err("Not in a subroutine!".to_string());
         }
 
-        self.goto(self.stack[self.sp] as u16);
+        self.goto(self.stack[self.sp - 1]);
         self.sp -= 1;
 
         Ok(())
@@ -157,7 +165,29 @@ impl Emulator {
         Ok(Opcode::decode(instruction)?)
     }
 
+    fn update_timers(&mut self) {
+        if self.time_in_ms < 17 {
+            return;
+        }
+
+        if self.delay_timer > 0 && self.time_in_ms - self.delay_timer_last_updated >= 17 {
+            self.delay_timer -= 1;
+            self.delay_timer_last_updated = self.time_in_ms;
+        }
+
+        if self.sound_timer > 0 && self.time_in_ms - self.sound_timer_last_updated >= 17 {
+            self.sound_timer -= 1;
+            self.sound_timer_last_updated = self.time_in_ms;
+        }
+    }
+
     pub fn update(&mut self) -> Result<EmulatorStatus, String> {
+        self.update_timers();
+
+        if self.awaiting_keypress {
+            return Ok(EmulatorStatus::Waiting);
+        }
+
         let opcode = self.fetch_and_decode()?;
 
         dbg!(&opcode);
@@ -250,8 +280,8 @@ impl Emulator {
             }
             Opcode::DrawSprite(r0, r1, immediate) => {
                 let (x, y, height) = (
-                    self.registers[r0 as usize] as usize,
-                    self.registers[r1 as usize] as usize,
+                    (self.registers[r0 as usize] % DISPLAY_WIDTH as u8) as usize,
+                    (self.registers[r1 as usize] % DISPLAY_HEIGHT as u8) as usize,
                     immediate as usize,
                 );
 
@@ -259,7 +289,14 @@ impl Emulator {
 
                 for dy in 0..height {
                     let sprite = self.memory[self.address as usize + dy];
+                    if y + dy >= DISPLAY_HEIGHT {
+                        break;
+                    }
                     for dx in 0..8 {
+                        if x + dx >= DISPLAY_WIDTH {
+                            continue;
+                        }
+
                         let sprite_bit = (sprite >> (7 - dx)) & 1;
 
                         if sprite_bit == 1 && self.display[y + dy][x + dx] == 1 {
@@ -290,8 +327,7 @@ impl Emulator {
                 self.registers[r0 as usize] = self.delay_timer;
             }
             Opcode::HaltAndStoreKeypressIntoRegister(_r0) => {
-                self.awaiting_keypress = true;
-                todo!();
+                self.awaiting_keypress = false;
             }
             Opcode::SetDelayTimerToRegister(r0) => {
                 self.delay_timer = self.registers[r0 as usize];
