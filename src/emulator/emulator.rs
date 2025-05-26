@@ -102,6 +102,18 @@ impl Emulator {
         self
     }
 
+    fn with_address_as(mut self, address: u16) -> Self {
+        self.address = address;
+        self
+    }
+
+    fn with_memory_as(mut self, memory: Vec<u8>, address: u16) -> Self {
+        for i in 0..memory.len() {
+            self.memory[(address + i as u16) as usize] = memory[i as usize];
+        }
+        self
+    }
+
     fn with_register_as(mut self, r: u8, v: u8) -> Self {
         self.registers[r as usize] = v;
         self
@@ -344,7 +356,25 @@ impl Emulator {
             Opcode::SetMemoryAddressToSpriteFromRegister(_) => {
                 unimplemented!()
             }
-            _ => Err(format!("Unknown instruction {:?}", opcode))?,
+            Opcode::CallMachineCodeRoutine(_) => unimplemented!("This is probably bad memory."),
+            Opcode::SetMemoryAddressToBinaryEncodedDecimalFromRegister(r0) => {
+                let data = self.registers[r0 as usize];
+                let (l, m, r) = (data / 100, data % 100 / 10, data % 10);
+
+                self.memory[self.address as usize] = l;
+                self.memory[(self.address + 1) as usize] = m;
+                self.memory[(self.address + 2) as usize] = r;
+            }
+            Opcode::DumpRegistersIntoMemoryUpToRegister(r0) => {
+                for r in 0..r0 {
+                    self.memory[(self.address + r as u16) as usize] = self.registers[r as usize];
+                }
+            }
+            Opcode::DumpMemoryIntoRegistersUpToRegister(r0) => {
+                for r in 0..r0 {
+                    self.registers[r as usize] = self.memory[(self.address + r as u16) as usize];
+                }
+            }
         };
 
         Ok(EmulatorStatus::Working)
@@ -724,5 +754,48 @@ mod tests {
 
         assert_update_working!(emulator);
         assert_eq!(emulator.pc, 2 + 0x200);
+    }
+
+    #[test]
+    fn opcode_set_memory_address_to_binary_encoded_decimal_from_register() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![
+                Opcode::SetMemoryAddressToBinaryEncodedDecimalFromRegister(1),
+            ])
+            .with_register_as(1, 123);
+
+        assert_update_working!(emulator);
+
+        assert_eq!(emulator.memory[emulator.address as usize], 1);
+        assert_eq!(emulator.memory[(emulator.address + 1) as usize], 2);
+        assert_eq!(emulator.memory[(emulator.address + 2) as usize], 3);
+    }
+
+    #[test]
+    fn opcode_dump_registers_into_memory_up_to_register() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::DumpRegistersIntoMemoryUpToRegister(3)])
+            .with_register_as(0, 0xBE)
+            .with_register_as(1, 0xEE)
+            .with_register_as(2, 0xEF);
+
+        assert_update_working!(emulator);
+        assert_eq!(emulator.memory[emulator.address as usize], 0xBE);
+        assert_eq!(emulator.memory[(emulator.address + 1) as usize], 0xEE);
+        assert_eq!(emulator.memory[(emulator.address + 2) as usize], 0xEF);
+    }
+
+    #[test]
+    fn opcode_dump_memory_into_registers_up_to_register() {
+        let mut emulator = Emulator::new()
+            .with_opcodes(vec![Opcode::DumpMemoryIntoRegistersUpToRegister(3)])
+            .with_address_as(0x400)
+            .with_memory_as(vec![0xDE, 0xEE, 0xED], 0x400);
+
+        assert_update_working!(emulator);
+
+        assert_eq!(emulator.registers[0], 0xDE);
+        assert_eq!(emulator.registers[1], 0xEE);
+        assert_eq!(emulator.registers[2], 0xED);
     }
 }
